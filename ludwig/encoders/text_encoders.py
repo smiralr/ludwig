@@ -67,9 +67,7 @@ class BERTEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFBertModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFBertModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         if not self.reduce_output == 'cls_pooled':
             self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
@@ -123,9 +121,7 @@ class GPTEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFOpenAIGPTModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFOpenAIGPTModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -174,9 +170,7 @@ class GPT2Encoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFGPT2Model.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFGPT2Model.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -224,9 +218,7 @@ class TransformerXLEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFTransfoXLModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFTransfoXLModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -272,9 +264,7 @@ class XLNetEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFXLNetModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFXLNetModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -323,9 +313,7 @@ class XLMEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFXLMModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFXLMModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -374,9 +362,7 @@ class RoBERTaEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFRobertaModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFRobertaModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         if not self.reduce_output == 'cls_pooled':
             self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
@@ -429,9 +415,7 @@ class DistilBERTEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFDistilBertModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFDistilBertModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -479,9 +463,7 @@ class CTRLEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFCTRLModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFCTRLModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -530,9 +512,7 @@ class CamemBERTEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFCamembertModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFCamembertModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         if not self.reduce_output == 'cls_pooled':
             self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
@@ -585,9 +565,7 @@ class ALBERTEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFAlbertModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFAlbertModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         if not self.reduce_output == 'cls_pooled':
             self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
@@ -640,9 +618,7 @@ class T5Encoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFT5Model.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFT5Model.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -691,9 +667,7 @@ class MT5Encoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFMT5Model.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFMT5Model.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -743,9 +717,7 @@ class XLMRoBERTaEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFXLMRobertaModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFXLMRobertaModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         if not self.reduce_output == 'cls_pooled':
             self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
@@ -798,9 +770,7 @@ class FlauBERTEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFFlaubertModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFFlaubertModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -849,9 +819,7 @@ class ELECTRAEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFElectraModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFElectraModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
         self.transformer.trainable = trainable
@@ -900,9 +868,7 @@ class LongformerEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFLongformerModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFLongformerModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         if not self.reduce_output == 'cls_pooled':
             self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
@@ -951,9 +917,7 @@ class AutoTransformerEncoder(TextEncoder):
             )
             sys.exit(-1)
 
-        self.transformer = TFAutoModel.from_pretrained(
-            pretrained_model_name_or_path
-        )
+        self.transformer = TFAutoModel.from_pretrained(pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
         self.reduce_output = reduce_output
         if not self.reduce_output == 'cls_pooled':
             self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)
