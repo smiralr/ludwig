@@ -81,7 +81,7 @@ class ALBERTEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = AlbertModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = AlbertModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = AlbertConfig(
                 vocab_size=vocab_size,
@@ -205,7 +205,7 @@ class MT5Encoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = MT5EncoderModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = MT5EncoderModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = MT5Config(
                 vocab_size=vocab_size,
@@ -313,7 +313,7 @@ class XLMRoBERTaEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = XLMRobertaModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = XLMRobertaModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = XLMRobertaConfig(
                 pad_token_id=pad_token_id,
@@ -419,7 +419,7 @@ class BERTEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = BertModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = BertModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = BertConfig(
                 vocab_size=vocab_size,
@@ -549,7 +549,7 @@ class XLMEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = XLMModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = XLMModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
             if trainable:
                 self.transformer.train()
         else:
@@ -671,7 +671,7 @@ class GPTEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = OpenAIGPTModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = OpenAIGPTModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = OpenAIGPTConfig(
                 vocab_size=vocab_size,
@@ -771,7 +771,7 @@ class GPT2Encoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = GPT2Model.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = GPT2Model.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = GPT2Config(
                 vocab_size=vocab_size,
@@ -863,7 +863,7 @@ class RoBERTaEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = RobertaModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = RobertaModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = RobertaConfig(
                 pad_token_id=pad_token_id,
@@ -969,7 +969,7 @@ class TransformerXLEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = TransfoXLModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = TransfoXLModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = TransfoXLConfig(
                 vocab_size=vocab_size,
@@ -1090,7 +1090,7 @@ class XLNetEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = XLNetModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = XLNetModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = XLNetConfig(
                 vocab_size=vocab_size,
@@ -1204,7 +1204,7 @@ class DistilBERTEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = DistilBertModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = DistilBertModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = DistilBertConfig(
                 vocab_size=vocab_size,
@@ -1303,7 +1303,7 @@ class CTRLEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = CTRLModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = CTRLModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = CTRLConfig(
                 vocab_size=vocab_size,
@@ -1406,7 +1406,7 @@ class CamemBERTEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = CamembertModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = CamembertModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = CamembertConfig(
                 vocab_size=vocab_size,
@@ -1519,7 +1519,7 @@ class T5Encoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = T5Model.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = T5Model.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = T5Config(
                 vocab_size=vocab_size,
@@ -1637,7 +1637,7 @@ class FlauBERTEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = FlaubertModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = FlaubertModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = FlaubertConfig(
                 vocab_size=vocab_size,
@@ -1758,7 +1758,7 @@ class ELECTRAEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = ElectraModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+            self.transformer = ElectraModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = ElectraConfig(
                 vocab_size=vocab_size,
@@ -1856,7 +1856,7 @@ class LongformerEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = LongformerModel.from_pretrained(pretrained_model_name_or_path, pretrained_kwargs)
+            self.transformer = LongformerModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', pretrained_kwargs)
         else:
             config = LongformerConfig(attention_window, sep_token_id, **kwargs)
             self.transformer = LongformerModel(config)
@@ -1933,7 +1933,7 @@ class AutoTransformerEncoder(Encoder):
             sys.exit(-1)
 
         pretrained_kwargs = pretrained_kwargs or {}
-        self.transformer = AutoModel.from_pretrained(pretrained_model_name_or_path, **pretrained_kwargs)
+        self.transformer = AutoModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         self.reduce_output = reduce_output
         if self.reduce_output != "cls_pooled":
             self.reduce_sequence = SequenceReducer(reduce_mode=reduce_output)

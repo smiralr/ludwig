@@ -701,8 +701,7 @@ class HFTokenizer(BaseTokenizer):
         from transformers import AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            pretrained_model_name_or_path,
-        )
+            pretrained_model_name_or_path, cache_dir='/home/bentoml/.cache/huggingface/transformers/')
 
     def __call__(self, text):
         return self.tokenizer.encode(text, truncation=True)
