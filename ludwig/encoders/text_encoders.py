@@ -1856,7 +1856,7 @@ class LongformerEncoder(Encoder):
 
         if use_pretrained:
             pretrained_kwargs = pretrained_kwargs or {}
-            self.transformer = LongformerModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', pretrained_kwargs)
+            self.transformer = LongformerModel.from_pretrained(pretrained_model_name_or_path='/home/bentoml/.cache/huggingface/transformers/', **pretrained_kwargs)
         else:
             config = LongformerConfig(attention_window, sep_token_id, **kwargs)
             self.transformer = LongformerModel(config)
