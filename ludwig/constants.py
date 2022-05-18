@@ -148,7 +148,7 @@ CONFIG = "config"
 
 COMBINER = "combiner"
 
-BALANCE_PERCENTAGE_TOLERANCE = 0.02
+BALANCE_PERCENTAGE_TOLERANCE = 0.03
 
 TABULAR = "tabular"
 AUTOML_DEFAULT_TABULAR_MODEL = "tabnet"
@@ -157,6 +157,7 @@ AUTOML_SMALLER_TEXT_ENCODER = "distilbert"
 AUTOML_TEXT_ENCODER_MAX_TOKEN_LEN = 512
 AUTOML_SMALLER_TEXT_LENGTH = 128
 AUTOML_LARGE_TEXT_DATASET = 100000
+AUTOML_MAX_ROWS_PER_CHECKPOINT = 350000
 AUTOML_DEFAULT_IMAGE_ENCODER = "stacked_cnn"
 
 HYPEROPT_WARNING = (
@@ -164,3 +165,5 @@ HYPEROPT_WARNING = (
     "It will be ignored. If you want to run hyperopt you should use the following command: ludwig "
     "hyperopt\n\n Do you want to continue? "
 )
+
+DEFAULT_AUDIO_TENSOR_LENGTH = 70000

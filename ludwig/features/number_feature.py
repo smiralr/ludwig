@@ -52,25 +52,19 @@ logger = logging.getLogger(__name__)
 class ZScoreTransformer(nn.Module):
     def __init__(self, mean: float = None, std: float = None, **kwargs: dict):
         super().__init__()
-        self.mu = mean
-        self.sigma = std
+        self.mu = float(mean) if mean is not None else mean
+        self.sigma = float(std) if std is not None else std
 
     def transform(self, x: np.ndarray) -> np.ndarray:
-        return self._transform(x)
-
-    def inverse_transform(self, x: np.ndarray) -> np.ndarray:
-        return self._inverse_transform(x)
-
-    def transform_inference(self, x: torch.Tensor) -> torch.Tensor:
-        return self._transform(x)
-
-    def inverse_transform_inference(self, x: torch.Tensor) -> torch.Tensor:
-        return self._inverse_transform(x)
-
-    def _transform(self, x: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
         return (x - self.mu) / self.sigma
 
-    def _inverse_transform(self, x: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
+    def inverse_transform(self, x: np.ndarray) -> np.ndarray:
+        return x * self.sigma + self.mu
+
+    def transform_inference(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self.mu) / self.sigma
+
+    def inverse_transform_inference(self, x: torch.Tensor) -> torch.Tensor:
         return x * self.sigma + self.mu
 
     @staticmethod
@@ -85,26 +79,25 @@ class ZScoreTransformer(nn.Module):
 class MinMaxTransformer(nn.Module):
     def __init__(self, min: float = None, max: float = None, **kwargs: dict):
         super().__init__()
-        self.min_value = min
-        self.max_value = max
-        self.range = None if min is None or max is None else max - min
+        self.min_value = float(min) if min is not None else min
+        self.max_value = float(max) if max is not None else max
+        if self.min_value is None or self.max_value is None:
+            self.range = None
+        else:
+            self.range = self.max_value - self.min_value
 
     def transform(self, x: np.ndarray) -> np.ndarray:
-        return self._transform(x)
-
-    def inverse_transform(self, x: np.ndarray) -> np.ndarray:
-        return self._inverse_transform(x)
-
-    def transform_inference(self, x: torch.Tensor) -> torch.Tensor:
-        return self._transform(x)
-
-    def inverse_transform_inference(self, x: torch.Tensor) -> torch.Tensor:
-        return self._inverse_transform(x)
-
-    def _transform(self, x: Union[np.ndarray, torch.Tensor]):
         return (x - self.min_value) / self.range
 
-    def _inverse_transform(self, x: Union[np.ndarray, torch.Tensor]):
+    def inverse_transform(self, x: np.ndarray) -> np.ndarray:
+        if self.range is None:
+            raise ValueError("Numeric transformer needs to be instantiated with " "min and max values.")
+        return x * self.range + self.min_value
+
+    def transform_inference(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self.min_value) / self.range
+
+    def inverse_transform_inference(self, x: torch.Tensor) -> torch.Tensor:
         if self.range is None:
             raise ValueError("Numeric transformer needs to be instantiated with " "min and max values.")
         return x * self.range + self.min_value
@@ -184,8 +177,8 @@ class _NumberPreprocessing(torch.nn.Module):
         super().__init__()
         self.numeric_transformer = get_transformer(metadata, metadata["preprocessing"])
 
-    def forward(self, v: Union[List[str], torch.Tensor]):
-        if not isinstance(v, torch.Tensor):
+    def forward(self, v: Union[List[str], List[torch.Tensor], torch.Tensor]):
+        if not torch.jit.isinstance(v, torch.Tensor):
             raise ValueError(f"Unsupported input: {v}")
         v = v.to(dtype=torch.float32)
         return self.numeric_transformer.transform_inference(v)
@@ -268,14 +261,29 @@ class NumberFeatureMixin(BaseFeatureMixin):
         backend,
         skip_save_processed_input,
     ):
+        # Had to replace normalize() function due to issue #1911
+        # this comment is to provide context for the change.
+        # original code
+        # def normalize(series: pd.Series) -> pd.Series:
+        #     series = series.copy()
+        #     numeric_transformer = get_transformer(metadata[feature_config[NAME]], preprocessing_parameters)
+        #     series.update(numeric_transformer.transform(series.values))
+        #     return series
+
         def normalize(series: pd.Series) -> pd.Series:
-            series = series.copy()
+            # retrieve request numeric transformer
             numeric_transformer = get_transformer(metadata[feature_config[NAME]], preprocessing_parameters)
-            series.update(numeric_transformer.transform(series.values))
-            return series
+
+            # transform input numeric values with specified transformer
+            transformed_values = numeric_transformer.transform(series.values)
+
+            # return transformed values with same index values as original series.
+            return pd.Series(transformed_values, index=series.index)
 
         input_series = input_df[feature_config[COLUMN]].astype(np.float32)
-        proc_df[feature_config[PROC_COLUMN]] = backend.df_engine.map_partitions(input_series, normalize)
+        proc_df[feature_config[PROC_COLUMN]] = backend.df_engine.map_partitions(
+            input_series, normalize, meta=input_series
+        )
 
         return proc_df
 

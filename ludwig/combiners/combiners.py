@@ -16,76 +16,44 @@
 import logging
 from abc import ABC
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict
 
 import torch
-from marshmallow_dataclass import dataclass
 from torch.nn import Linear, ModuleList
 
-import ludwig.marshmallow.marshmallow_schema_utils as schema
 from ludwig.constants import BINARY, NUMBER
-from ludwig.encoders.sequence_encoders import ParallelCNN, StackedCNN, StackedCNNRNN, StackedParallelCNN, StackedRNN
+from ludwig.encoders.registry import sequence_encoder_registry
 from ludwig.features.base_feature import InputFeature
 from ludwig.modules.attention_modules import TransformerStack
 from ludwig.modules.embedding_modules import Embed
 from ludwig.modules.fully_connected_modules import FCStack
 from ludwig.modules.reduction_modules import SequenceReducer
 from ludwig.modules.tabnet_modules import TabNet
+from ludwig.schema.combiners import (
+    ComparatorCombinerConfig,
+    ConcatCombinerConfig,
+    ProjectAggregateCombinerConfig,
+    SequenceCombinerConfig,
+    SequenceConcatCombinerConfig,
+    TabNetCombinerConfig,
+    TabTransformerCombinerConfig,
+    TransformerCombinerConfig,
+)
+from ludwig.schema.combiners.utils import combiner_registry, register_combiner
 from ludwig.utils.misc_utils import get_from_registry
-from ludwig.utils.registry import Registry
 from ludwig.utils.torch_utils import LudwigModule, sequence_length_3D
 from ludwig.utils.torch_utils import sequence_mask as torch_sequence_mask
 
 logger = logging.getLogger(__name__)
 
-sequence_encoder_registry = {
-    "stacked_cnn": StackedCNN,
-    "parallel_cnn": ParallelCNN,
-    "stacked_parallel_cnn": StackedParallelCNN,
-    "rnn": StackedRNN,
-    "cnnrnn": StackedCNNRNN,
-    # todo: add transformer
-    # 'transformer': StackedTransformer,
-}
 
-combiner_registry = Registry()
+def get_combiner_class(combiner_type: str):
+    """Returns the corresponding combiner class from `ludwig.combiners.combiners.combiner_registry`.
 
-
-def register_combiner(name: str):
-    def wrap(cls):
-        combiner_registry[name] = cls
-        return cls
-
-    return wrap
-
-
-def get_combiner_jsonschema():
-    """Returns a JSON schema structured to only require a `type` key and then conditionally apply a corresponding
-    combiner's field constraints."""
-    combiner_types = sorted(list(combiner_registry.keys()))
-    return {
-        "type": "object",
-        "properties": {
-            "type": {"type": "string", "enum": combiner_types, "default": "concat"},
-        },
-        "allOf": get_combiner_conds(),
-        "required": ["type"],
-    }
-
-
-def get_combiner_conds():
-    """Returns a list of if-then JSON clauses for each combiner type in `combiner_registry` and its properties'
-    constraints."""
-    combiner_types = sorted(list(combiner_registry.keys()))
-    conds = []
-    for combiner_type in combiner_types:
-        combiner_cls = combiner_registry[combiner_type]
-        schema_cls = combiner_cls.get_schema_cls()
-        combiner_schema = schema.get_custom_schema_from_marshmallow_class(schema_cls)
-        combiner_props = combiner_schema["properties"]
-        combiner_cond = schema.create_cond({"type": combiner_type}, combiner_props)
-        conds.append(combiner_cond)
-    return conds
+    :param combiner_type: identifier that should correspond to a registered combiner
+    :type combiner_type: str
+    """
+    return get_from_registry(combiner_type, combiner_registry)
 
 
 # super class to house common properties
@@ -120,54 +88,6 @@ class Combiner(LudwigModule, ABC):
             }
         output_tensor = self.forward(pseudo_input)
         return output_tensor["combiner_output"].size()[1:]
-
-
-class BaseCombinerConfig(schema.BaseMarshmallowConfig):
-    """Base combiner config class."""
-
-    pass
-
-
-@dataclass
-class ConcatCombinerConfig(BaseCombinerConfig):
-    """Parameters for concat combiner."""
-
-    fc_layers: Optional[List[Dict[str, Any]]] = schema.DictList()
-    """TODO: Document parameters. (default: None)."""
-
-    num_fc_layers: int = schema.NonNegativeInteger(default=0)
-    """TODO: Document parameters. (default: 0)."""
-
-    output_size: int = schema.PositiveInteger(default=256)
-    """Output size of a fully connected layer (default: 256)."""
-
-    use_bias: bool = True
-    """Whether the layer uses a bias vector (default: True)."""
-
-    weights_initializer: Union[str, Dict] = schema.InitializerOrDict(default="xavier_uniform")
-    """TODO: Document parameters. (default: 'xavier_uniform')."""
-
-    bias_initializer: Union[str, Dict] = schema.InitializerOrDict(default="zeros")
-    """TODO: Document parameters. (default: 'zeros')."""
-
-    norm: Optional[str] = schema.StringOptions(["batch", "layer"])
-    """TODO: Document parameters. (default: norm)."""
-
-    norm_params: Optional[dict] = schema.Dict()
-    """TODO: Document parameters. (default: None)."""
-
-    activation: str = schema.ActivationOptions(default="relu")
-    """TODO: Document parameters. (default: 'relu')."""
-
-    dropout: float = schema.FloatRange(default=0.0, min=0, max=1)
-    """TODO: Document parameters. (default: 0.0)."""
-
-    flatten_inputs: bool = False
-    """Whether to flatten input tensors to a vector (default: False)."""
-
-    residual: bool = False
-    """Whether to add a residual connection to each fully connected layer block. All fully connected layers must have
-       the same size (default: False)."""
 
 
 @register_combiner(name="concat")
@@ -242,17 +162,6 @@ class ConcatCombiner(Combiner):
     @staticmethod
     def get_schema_cls():
         return ConcatCombinerConfig
-
-
-@dataclass
-class SequenceConcatCombinerConfig(BaseCombinerConfig):
-    """Parameters for sequence concat combiner."""
-
-    main_sequence_feature: Optional[str] = None
-    """TODO: Document parameters. (default: None)."""
-
-    reduce_output: Optional[str] = schema.ReductionOptions()
-    """TODO: Document parameters. (default: None)."""
 
 
 @register_combiner(name="sequence_concat")
@@ -401,20 +310,6 @@ class SequenceConcatCombiner(Combiner):
         return SequenceConcatCombinerConfig
 
 
-@dataclass
-class SequenceCombinerConfig(BaseCombinerConfig):
-    """Parameters for sequence combiner."""
-
-    main_sequence_feature: Optional[str] = None
-    """TODO: Document parameters. (default: None)."""
-
-    reduce_output: Optional[str] = schema.ReductionOptions()
-    """TODO: Document parameters. (default: None)."""
-
-    encoder: Optional[str] = schema.StringOptions(list(sequence_encoder_registry.keys()))
-    """TODO: Document parameters. (default: None)."""
-
-
 @register_combiner(name="sequence")
 class SequenceCombiner(Combiner):
     def __init__(self, input_features: Dict[str, "InputFeature"], config: SequenceCombinerConfig = None, **kwargs):
@@ -478,54 +373,6 @@ class SequenceCombiner(Combiner):
     @staticmethod
     def get_schema_cls():
         return SequenceCombinerConfig
-
-
-@dataclass
-class TabNetCombinerConfig(BaseCombinerConfig):
-    """Parameters for tabnet combiner."""
-
-    size: int = schema.PositiveInteger(default=32)
-    """`N_a` in the paper (default: 32)."""
-
-    output_size: int = schema.PositiveInteger(default=32)
-    """Output size of a fully connected layer. `N_d` in the paper (default: 32)."""
-
-    num_steps: int = schema.NonNegativeInteger(default=1)
-    """Number of steps / repetitions of the the attentive transformer and feature transformer computations. `N_steps` in
-       the paper (default: 1)."""
-
-    num_total_blocks: int = schema.NonNegativeInteger(default=4)
-    """Total number of feature transformer block at each step (default: 4)."""
-
-    num_shared_blocks: int = schema.NonNegativeInteger(default=2)
-    """Number of shared feature transformer blocks across the steps (default: 2)."""
-
-    relaxation_factor: float = 1.5
-    """Factor that influences how many times a feature should be used across the steps of computation. a value of 1
-       implies it each feature should be use once, a higher value allows for multiple usages. `gamma` in the paper
-       (default: 1.5)."""
-
-    bn_epsilon: float = 1e-3
-    """Epsilon to be added to the batch norm denominator (default: 1e-3)."""
-
-    bn_momentum: float = 0.7
-    """Momentum of the batch norm. `m_B` in the paper (default: 0.7)."""
-
-    bn_virtual_bs: Optional[int] = schema.PositiveInteger()
-    """Size of the virtual batch size used by ghost batch norm. If null, regular batch norm is used instead. `B_v` from
-       the paper (default: None)."""
-
-    sparsity: float = 1e-5
-    """Multiplier of the sparsity inducing loss. `lambda_sparse` in the paper (default: 1e-5)."""
-
-    entmax_mode: str = schema.StringOptions(["entmax15", "sparsemax", "constant", "adaptive"], default="sparsemax")
-    """TODO: Document parameters. (default: 'sparsemax')"""
-
-    entmax_alpha: float = schema.FloatRange(default=1.5, min=1, max=2)  # 1 corresponds to softmax, 2 is sparsemax.
-    """TODO: Document parameters. (default: 1.5)"""
-
-    dropout: float = schema.FloatRange(default=0.0, min=0, max=1)
-    """Dropout rate for the transformer block (default: 0.0)."""
 
 
 @register_combiner(name="tabnet")
@@ -606,71 +453,6 @@ class TabNetCombiner(Combiner):
     @property
     def output_shape(self) -> torch.Size:
         return self.tabnet.output_shape
-
-
-@dataclass
-class CommonTransformerConfig:
-    """Common transformer parameter values."""
-
-    num_layers: int = schema.PositiveInteger(default=1)
-    """TODO: Document parameters. (default: 1)."""
-
-    hidden_size: int = schema.NonNegativeInteger(default=256)
-    """The number of hidden units of the TransformerStack as well as the dimension that each incoming input feature is
-       projected to before feeding to the TransformerStack (default: 256)."""
-
-    num_heads: int = schema.NonNegativeInteger(default=8)
-    """Number of heads of the self attention in the transformer block (default: 8)."""
-
-    transformer_output_size: int = schema.NonNegativeInteger(default=256)
-    """Size of the fully connected layer after self attention in the transformer block. This is usually the same as
-       `hidden_size` and `embedding_size` (default: 256)."""
-
-    dropout: float = schema.FloatRange(default=0.1, min=0, max=1)
-    """Dropout rate for the transformer block (default: 0.1)."""
-
-    fc_layers: Optional[List[Dict[str, Any]]] = schema.DictList()
-    """TODO: Document parameters. (default: None)."""
-
-    # TODO(#1673): Add conditional logic for fields like this one:
-    num_fc_layers: int = schema.NonNegativeInteger(default=0)
-    """The number of stacked fully connected layers (only applies if `reduce_output` is not null) (default: 0)."""
-
-    output_size: int = schema.PositiveInteger(default=256)
-    """Output size of a fully connected layer (default: 256)."""
-
-    use_bias: bool = True
-    """Whether the layer uses a bias vector (default: True)."""
-
-    weights_initializer: Union[str, Dict] = schema.InitializerOrDict(default="xavier_uniform")
-    """TODO: Document parameters. (default: 'xavier_uniform')."""
-
-    bias_initializer: Union[str, Dict] = schema.InitializerOrDict(default="zeros")
-    """TODO: Document parameters. (default: 'zeros')."""
-
-    norm: Optional[str] = schema.StringOptions(["batch", "layer"])
-    """TODO: Document parameters. (default: None)."""
-
-    norm_params: Optional[dict] = schema.Dict()
-    """TODO: Document parameters. (default: None)."""
-
-    fc_activation: str = schema.ActivationOptions(default="relu")
-    """TODO: Document parameters. (default: 'relu')."""
-
-    fc_dropout: float = schema.FloatRange(default=0.0, min=0, max=1)
-    """TODO: Document parameters. (default: 0.0)."""
-
-    fc_residual: bool = False
-    """TODO: Document parameters. (default: False)."""
-
-
-# TODO(ksbrar): Refactor transformers into using base class for common attrs?
-@dataclass
-class TransformerCombinerConfig(BaseCombinerConfig, CommonTransformerConfig):
-    """Parameters for transformer combiner."""
-
-    reduce_output: Optional[str] = schema.ReductionOptions(default="mean")
-    """TODO: Document parameters. (default: 'mean')."""
 
 
 @register_combiner(name="transformer")
@@ -771,17 +553,6 @@ class TransformerCombiner(Combiner):
     @staticmethod
     def get_schema_cls():
         return TransformerCombinerConfig
-
-
-@dataclass
-class TabTransformerCombinerConfig(BaseCombinerConfig, CommonTransformerConfig):
-    """Parameters for tab transformer combiner."""
-
-    embed_input_feature_name: Optional[Union[str, int]] = schema.Embed()
-    """TODO: Document parameters. (default: None)."""
-
-    reduce_output: str = schema.ReductionOptions(default="concat")
-    """TODO: Document parameters. (default: 'concat')."""
 
 
 @register_combiner(name="tabtransformer")
@@ -988,47 +759,6 @@ class TabTransformerCombiner(Combiner):
         return TabTransformerCombinerConfig
 
 
-@dataclass
-class ComparatorCombinerConfig(BaseCombinerConfig):
-    """Parameters for comparator combiner."""
-
-    entity_1: List[str]
-    """TODO: Document parameters."""
-
-    entity_2: List[str]
-    """TODO: Document parameters."""
-
-    fc_layers: Optional[List[Dict[str, Any]]] = schema.DictList()
-    """TODO: Document parameters. (default: None)."""
-
-    num_fc_layers: int = schema.NonNegativeInteger(default=1)
-    """TODO: Document parameters. (default: 1)."""
-
-    output_size: int = schema.PositiveInteger(default=256)
-    """Output size of a fully connected layer (default: 256)."""
-
-    use_bias: bool = True
-    """Whether the layer uses a bias vector (default: True)."""
-
-    weights_initializer: Union[str, Dict] = schema.InitializerOrDict(default="xavier_uniform")
-    """TODO: Document parameters. (default: 'xavier_uniform')."""
-
-    bias_initializer: Union[str, Dict] = schema.InitializerOrDict(default="zeros")
-    """TODO: Document parameters. (default: 'zeros')."""
-
-    norm: Optional[str] = schema.StringOptions(["batch", "layer"])
-    """TODO: Document parameters. (default: None)."""
-
-    norm_params: Optional[dict] = schema.Dict()
-    """TODO: Document parameters. (default: None)."""
-
-    activation: str = schema.ActivationOptions(default="relu")
-    """TODO: Document parameters. (default: 'relu')."""
-
-    dropout: float = schema.FloatRange(default=0.0, min=0, max=1)
-    """Dropout rate for the transformer block (default: 0.0)."""
-
-
 @register_combiner(name="comparator")
 class ComparatorCombiner(Combiner):
     def __init__(
@@ -1176,10 +906,90 @@ class ComparatorCombiner(Combiner):
         return ComparatorCombinerConfig
 
 
-def get_combiner_class(combiner_type: str):
-    """Returns the corresponding combiner class from `ludwig.combiners.combiners.combiner_registry`.
+@register_combiner(name="project_aggregate")
+class ProjectAggregateCombiner(Combiner):
+    def __init__(
+        self, input_features: Dict[str, "InputFeature"] = None, config: ProjectAggregateCombinerConfig = None, **kwargs
+    ):
+        super().__init__(input_features)
+        self.name = "ProjectAggregateCombiner"
+        logger.debug(f" {self.name}")
 
-    :param combiner_type: identifier that should correspond to a registered combiner
-    :type combiner_type: str
-    """
-    return get_from_registry(combiner_type, combiner_registry)
+        logger.debug("  Projectors")
+        self.projectors = ModuleList(
+            # regardless of rank-2 or rank-3 input, torch.prod() calculates size
+            # after flattening the encoder output tensor
+            [
+                Linear(
+                    torch.prod(torch.Tensor([*input_features[inp].output_shape])).type(torch.int32),
+                    config.projection_size,
+                )
+                for inp in input_features
+            ]
+        )
+
+        self.fc_stack = None
+
+        # todo future: this may be redundant, check
+        fc_layers = config.fc_layers
+        if fc_layers is None and config.num_fc_layers is not None:
+            fc_layers = []
+            for i in range(config.num_fc_layers):
+                fc_layers.append({"output_size": config.output_size})
+
+        self.fc_layers = fc_layers
+        if self.fc_layers is not None:
+            logger.debug("  FCStack")
+            self.fc_stack = FCStack(
+                first_layer_input_size=config.projection_size,
+                layers=config.fc_layers,
+                num_layers=config.num_fc_layers,
+                default_output_size=config.output_size,
+                default_use_bias=config.use_bias,
+                default_weights_initializer=config.weights_initializer,
+                default_bias_initializer=config.bias_initializer,
+                default_norm=config.norm,
+                default_norm_params=config.norm_params,
+                default_activation=config.activation,
+                default_dropout=config.dropout,
+                residual=config.residual,
+            )
+
+        if input_features and len(input_features) == 1 and self.fc_layers is None:
+            self.supports_masking = True
+
+    def forward(self, inputs: Dict) -> Dict:  # encoder outputs
+        encoder_outputs = [inputs[k]["encoder_output"] for k in inputs]
+
+        # ================ Flatten ================
+        batch_size = encoder_outputs[0].shape[0]
+        encoder_outputs = [torch.reshape(eo, [batch_size, -1]) for eo in encoder_outputs]
+
+        # ================ Project ================
+        projected = [self.projectors[i](eo) for i, eo in enumerate(encoder_outputs)]
+        hidden = torch.stack(projected)
+        hidden = torch.permute(hidden, (1, 0, 2))  # shape [bs, num_eo, h]
+
+        # ================ Aggregate ================
+        hidden = torch.mean(hidden, dim=1)
+
+        # ================ Fully Connected ================
+        if self.fc_stack is not None:
+            hidden = self.fc_stack(hidden)
+
+        return_data = {"combiner_output": hidden}
+
+        if len(inputs) == 1:
+            # Workaround for including additional tensors from output of input encoders for
+            # potential use in decoders, e.g. LSTM state for seq2seq.
+            # TODO(Justin): Think about how to make this communication work for multi-sequence
+            # features. Other combiners.
+            for key, value in [d for d in inputs.values()][0].items():
+                if key != "encoder_output":
+                    return_data[key] = value
+
+        return return_data
+
+    @staticmethod
+    def get_schema_cls():
+        return ProjectAggregateCombinerConfig

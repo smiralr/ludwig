@@ -15,9 +15,10 @@
 # ==============================================================================
 import logging
 import os
+from collections import Counter
 from functools import partial
 from multiprocessing import Pool
-from typing import Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import requests
@@ -61,6 +62,7 @@ from ludwig.utils.misc_utils import set_default_value
 
 logger = logging.getLogger(__name__)
 
+
 # TODO(shreya): Confirm if it's ok to do per channel normalization
 # TODO(shreya): Also confirm if this is being used anywhere
 # TODO(shreya): Confirm if ok to use imagenet means and std devs
@@ -70,6 +72,52 @@ image_scaling_registry = {
         torchvision.transforms.functional.normalize, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
     ),
 }
+
+
+class _ImagePreprocessing(torch.nn.Module):
+    """Torchscript-enabled version of preprocessing done by ImageFeatureMixin.add_feature_data."""
+
+    def __init__(self, metadata: Dict[str, Any]):
+        super().__init__()
+        self.height = metadata["preprocessing"]["height"]
+        self.width = metadata["preprocessing"]["width"]
+        self.num_channels = metadata["preprocessing"]["num_channels"]
+        self.resize_method = metadata["preprocessing"]["resize_method"]
+
+    def forward(self, v: Union[List[str], List[torch.Tensor], torch.Tensor]) -> torch.Tensor:
+        """Takes a list of images and adjusts the size and number of channels as specified in the metadata.
+
+        If `v` is already a torch.Tensor, we assume that the images are already preprocessed to be the same size.
+        """
+        if torch.jit.isinstance(v, List[str]):
+            raise ValueError(f"Unsupported input: {v}")
+
+        if torch.jit.isinstance(v, List[torch.Tensor]):
+            imgs = [resize_image(img, (self.height, self.width), self.resize_method) for img in v]
+            imgs_stacked = torch.stack(imgs)
+        else:
+            imgs_stacked = v
+
+        _, num_channels, height, width = imgs_stacked.shape
+
+        # Ensure images are the size expected by the model
+        if height != self.height or width != self.width:
+            imgs_stacked = resize_image(imgs_stacked, (self.height, self.width), self.resize_method)
+
+        # Ensures images have the number of channels expected by the model
+        if num_channels != self.num_channels:
+            if self.num_channels == 1:
+                imgs_stacked = grayscale(imgs_stacked)
+            elif num_channels < self.num_channels:
+                extra_channels = self.num_channels - num_channels
+                imgs_stacked = torch.nn.functional.pad(imgs_stacked, [0, 0, 0, 0, 0, extra_channels])
+            else:
+                raise ValueError(
+                    f"Number of channels cannot be reconciled. metadata.num_channels = "
+                    f"{self.num_channels}, but imgs.shape[1] = {num_channels}"
+                )
+
+        return imgs_stacked
 
 
 class ImageFeatureMixin(BaseFeatureMixin):
@@ -205,6 +253,64 @@ class ImageFeatureMixin(BaseFeatureMixin):
         return img.numpy()
 
     @staticmethod
+    def _infer_image_size(image_sample: List[torch.Tensor], max_height: int, max_width: int):
+        """Infers the size to use from a group of images. The returned height will be the average height of images
+        in image_sample rounded to the nearest integer, or max_height. Likewise for width.
+
+        Args:
+            image_sample: Sample of images to use to infer image size. Must be formatted as [channels, height, width].
+            max_height: Maximum height.
+            max_width: Maximum width.
+
+        Return:
+            (height, width) The inferred height and width.
+        """
+        height_avg = sum(x.shape[1] for x in image_sample) / len(image_sample)
+        width_avg = sum(x.shape[2] for x in image_sample) / len(image_sample)
+        height = min(int(round(height_avg)), max_height)
+        width = min(int(round(width_avg)), max_width)
+
+        logger.debug(f"Inferring height: {height} and width: {width}")
+        return height, width
+
+    @staticmethod
+    def _infer_number_of_channels(image_sample: List[torch.Tensor]):
+        """Infers the channel depth to use from a group of images.
+
+        We make the assumption that the majority of datasets scraped from the web will be RGB, so if we get a mixed bag
+        of images we should default to that. However, if the majority of the sample images have a specific channel depth
+        (other than 3) this is probably intentional so we keep it, but log an info message.
+        """
+        n_images = len(image_sample)
+        channel_frequency = Counter([num_channels_in_image(x) for x in image_sample])
+        if channel_frequency[1] > n_images / 2:
+            # If the majority of images in sample are 1 channel, use 1.
+            num_channels = 1
+        elif channel_frequency[2] > n_images / 2:
+            # If the majority of images in sample are 2 channel, use 2.
+            num_channels = 2
+        elif channel_frequency[4] > n_images / 2:
+            # If the majority of images in sample are 4 channel, use 4.
+            num_channels = 4
+        else:
+            # Default case: use 3 channels.
+            num_channels = 3
+        logging.info(f"Inferring num_channels from the first {n_images} images.")
+        logging.info("\n".join([f"  images with {k} channels: {v}" for k, v in sorted(channel_frequency.items())]))
+        if num_channels == max(channel_frequency, key=channel_frequency.get):
+            logging.info(
+                f"Using {num_channels} channels because it is the majority in sample. If an image with"
+                f" a different depth is read, will attempt to convert to {num_channels} channels."
+            )
+        else:
+            logging.info(f"Defaulting to {num_channels} channels.")
+        logging.info(
+            "To explicitly set the number of channels, define num_channels in the preprocessing dictionary of "
+            "the image input feature config."
+        )
+        return num_channels
+
+    @staticmethod
     def _finalize_preprocessing_parameters(
         preprocessing_parameters: dict,
         first_img_entry: Optional[Union[str, torch.Tensor]],
@@ -258,19 +364,11 @@ class ImageFeatureMixin(BaseFeatureMixin):
             # Default to inferring from sample or first image.
             if preprocessing_parameters[INFER_IMAGE_DIMENSIONS]:
                 should_resize = True
-
-                # assumed image format is channels first [channels, height, width]
-                height_avg = min(
-                    sum(x.shape[1] for x in inferred_sample) / len(inferred_sample),
-                    preprocessing_parameters[INFER_IMAGE_MAX_HEIGHT],
+                height, width = ImageFeatureMixin._infer_image_size(
+                    inferred_sample,
+                    max_height=preprocessing_parameters[INFER_IMAGE_MAX_HEIGHT],
+                    max_width=preprocessing_parameters[INFER_IMAGE_MAX_WIDTH],
                 )
-                width_avg = min(
-                    sum(x.shape[2] for x in inferred_sample) / len(inferred_sample),
-                    preprocessing_parameters[INFER_IMAGE_MAX_WIDTH],
-                )
-
-                height, width = round(height_avg), round(width_avg)
-                logger.debug(f"Inferring height: {height} and width: {width}")
             elif first_image is not None:
                 height, width = first_image.shape[0], first_image.shape[1]
             else:
@@ -287,9 +385,7 @@ class ImageFeatureMixin(BaseFeatureMixin):
             user_specified_num_channels = False
             if preprocessing_parameters[INFER_IMAGE_DIMENSIONS]:
                 user_specified_num_channels = True
-                # Use the maximum num_channels found across all sampled images. torchvision has built-in support for
-                # upsampling images.
-                num_channels = max(num_channels_in_image(x) for x in inferred_sample)
+                num_channels = ImageFeatureMixin._infer_number_of_channels(inferred_sample)
             elif first_image is not None:
                 num_channels = num_channels_in_image(first_image)
             else:
@@ -306,6 +402,8 @@ class ImageFeatureMixin(BaseFeatureMixin):
     def add_feature_data(
         feature_config, input_df, proc_df, metadata, preprocessing_parameters, backend, skip_save_processed_input
     ):
+        set_default_value(feature_config["preprocessing"], "in_memory", preprocessing_parameters["in_memory"])
+
         in_memory = preprocessing_parameters["in_memory"]
         if PREPROCESSING in feature_config and "in_memory" in feature_config[PREPROCESSING]:
             in_memory = feature_config[PREPROCESSING]["in_memory"]
@@ -472,3 +570,7 @@ class ImageInputFeature(ImageFeatureMixin, InputFeature):
     def populate_defaults(input_feature):
         set_default_value(input_feature, TIED, None)
         set_default_value(input_feature, PREPROCESSING, {})
+
+    @staticmethod
+    def create_preproc_module(metadata: Dict[str, Any]) -> torch.nn.Module:
+        return _ImagePreprocessing(metadata)

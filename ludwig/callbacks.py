@@ -113,7 +113,7 @@ class Callback(ABC):
         experiment_name: str,
         model_name: str,
         output_directory: str,
-        resume: Union[str, None],
+        resume_directory: Union[str, None],
     ):
         """Called after preprocessing, but before the creation of the model and trainer objects.
 
@@ -122,7 +122,7 @@ class Callback(ABC):
         :param experiment_name: The experiment name.
         :param model_name: The model name.
         :param output_directory: file path to where training results are stored.
-        :param resume: model directory to resume training from, or None.
+        :param resume_directory: model directory to resume training from, or None.
         """
         pass
 
@@ -158,13 +158,14 @@ class Callback(ABC):
         """
         pass
 
-    def on_trainer_train_teardown(self, trainer, progress_tracker, is_coordinator: bool):
+    def on_trainer_train_teardown(self, trainer, progress_tracker, save_path: str, is_coordinator: bool):
         """Called in every trainer (distributed or local) after training completes.
 
         :param trainer: The trainer instance.
         :type trainer: ludwig.models.trainer.Trainer
         :param progress_tracker: An object which tracks training progress.
         :type progress_tracker: ludwig.utils.trainer_utils.ProgressTracker
+        :param save_path: The path to the directory model is saved in.
         :param is_coordinator: Is this trainer the coordinator.
         """
         pass

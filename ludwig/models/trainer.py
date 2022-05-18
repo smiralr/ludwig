@@ -16,6 +16,7 @@
 """This module contains the class and auxiliary methods of a model."""
 import gc
 import logging
+import math
 import os
 import os.path
 import signal
@@ -24,17 +25,15 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import psutil
 import torch
-from marshmallow_dataclass import dataclass
 from tabulate import tabulate
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-import ludwig.marshmallow.marshmallow_schema_utils as schema
 from ludwig.constants import COMBINED, LOSS, TEST, TRAINING, VALIDATION
 from ludwig.data.dataset.base import Dataset
 from ludwig.globals import (
@@ -47,14 +46,8 @@ from ludwig.globals import (
 from ludwig.models.ecd import ECD
 from ludwig.models.predictor import Predictor
 from ludwig.modules.metric_modules import get_improved_fun, get_initial_validation_value
-from ludwig.modules.optimization_modules import (
-    BaseOptimizerConfig,
-    create_clipper,
-    create_optimizer,
-    GradientClippingConfig,
-    GradientClippingDataclassField,
-    OptimizerDataclassField,
-)
+from ludwig.modules.optimization_modules import create_clipper, create_optimizer
+from ludwig.schema.trainer import TrainerConfig
 from ludwig.utils import time_utils
 from ludwig.utils.checkpoint_utils import Checkpoint, CheckpointManager
 from ludwig.utils.defaults import default_random_seed
@@ -62,7 +55,12 @@ from ludwig.utils.horovod_utils import return_first
 from ludwig.utils.math_utils import exponential_decay, learning_rate_warmup, learning_rate_warmup_distributed
 from ludwig.utils.metric_utils import get_metric_names, TrainerMetric
 from ludwig.utils.misc_utils import set_random_seed
-from ludwig.utils.trainer_utils import get_final_steps_per_checkpoint, get_new_progress_tracker, ProgressTracker
+from ludwig.utils.trainer_utils import (
+    get_final_steps_per_checkpoint,
+    get_new_progress_tracker,
+    get_total_steps,
+    ProgressTracker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +75,17 @@ class BaseTrainer(ABC):
         self,
         dataset,
     ):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def tune_batch_size(
+        self,
+        config: Dict[str, Any],
+        training_set: Dataset,
+        random_seed: int = default_random_seed,
+        max_trials: int = 10,
+        halving_limit: int = 3,
+    ) -> int:
         raise NotImplementedError()
 
     @property
@@ -99,123 +108,6 @@ class BaseTrainer(ABC):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()
-
-
-def get_trainer_jsonschema():
-    return schema.get_custom_schema_from_marshmallow_class(TrainerConfig)
-
-
-@dataclass
-class TrainerConfig(schema.BaseMarshmallowConfig):
-    """TrainerConfig is a dataclass that configures most of the hyperparameters used for model training."""
-
-    optimizer: BaseOptimizerConfig = OptimizerDataclassField(default={"type": "adam"})
-    """Instance of `ludwig.modules.optimization_modules.BaseOptimizerConfig` that specifies a torch-supported optimizer
-       and its attributes (default: `ludwig.modules.optimization_modules.AdamOptimizerConfig()`)."""
-
-    epochs: int = schema.PositiveInteger(default=100)
-    """Number of epochs the algorithm is intended to be run over (default: 100)."""
-
-    regularization_lambda: float = schema.FloatRange(default=0.0, min=0)
-    """Strength of the $L2$ regularization (default: 0.0)."""
-
-    regularization_type: Optional[str] = schema.RegularizerOptions(default="l2")
-    """Type of regularization, one of ('l1', 'l2', 'l1_l2', None) (default: 'l2')."""
-
-    should_shuffle: bool = True
-    """Whether to shuffle batches during training when true (default: True)."""
-
-    learning_rate: float = schema.NumericOrStringOptionsField(
-        default=0.001, min=0.0, max=1.0, options=["auto"], default_numeric=0.001, default_option="auto", nullable=False
-    )
-    """Learning rate specified in configuration, represents how much to scale the gradients by. If 'auto',
-       `tune_learning_rate` must be called before training to estimate the optimal learning rate. (default: 0.001)."""
-
-    batch_size: Union[int, str] = schema.IntegerOrStringOptionsField(
-        default=128, options=["auto"], default_numeric=128, default_option="auto", nullable=False, min_exclusive=0
-    )
-    """Size of batch to pass to the model for training (default: 128)."""
-
-    eval_batch_size: Union[None, int, str] = schema.IntegerOrStringOptionsField(
-        default=None, options=["auto"], default_numeric=None, default_option="auto", nullable=True, min_exclusive=0
-    )
-    """Size of batch to pass to the model for evaluation (default: 'auto')."""
-
-    early_stop: int = schema.IntegerRange(default=5, min=-1)
-    """How many epochs without any improvement in the `validation_metric` triggers the algorithm to stop. Can be set to
-       -1, which disables early_stop (default: 5)."""
-
-    steps_per_checkpoint: int = schema.NonNegativeInteger(default=0)
-    """How often the model is checkpointed. Also dictates maximum evaluation frequency. If 0 the model is checkpointed
-       after every epoch. (default: 0)."""
-
-    checkpoints_per_epoch: int = schema.NonNegativeInteger(default=0)
-    """Number of checkpoints per epoch. For example, 2 -> checkpoints are written every half of an epoch. Note that it
-       is invalid to specify both non-zero `steps_per_checkpoint` and non-zero `checkpoints_per_epoch` (default: 0)."""
-
-    evaluate_training_set: bool = True
-    """Whether to include the entire training set during evaluation (default: True)."""
-
-    reduce_learning_rate_on_plateau: float = schema.FloatRange(default=0.0, min=0.0, max=1.0)
-    """Reduces the learning rate when the algorithm hits a plateau (i.e. the performance on the validation does not
-       improve) (default: 0.0)."""
-
-    reduce_learning_rate_on_plateau_patience: int = schema.NonNegativeInteger(default=5)
-    """How many epochs have to pass before the learning rate reduces (default: 5)."""
-
-    reduce_learning_rate_on_plateau_rate: float = schema.FloatRange(default=0.5, min=0.0, max=1.0)
-    """Rate at which we reduce the learning rate (default: 0.5)."""
-
-    reduce_learning_rate_eval_metric: str = LOSS
-    """TODO: Document parameters. (default: `ludwig.constants.LOSS`)."""
-
-    reduce_learning_rate_eval_split: str = TRAINING
-    """TODO: Document parameters. (default: `ludwig.constants.TRAINING`)."""
-
-    increase_batch_size_on_plateau: int = schema.NonNegativeInteger(default=0)
-    """Number to increase the batch size by on a plateau (default: 0)."""
-
-    increase_batch_size_on_plateau_patience: int = schema.NonNegativeInteger(default=5)
-    """How many epochs to wait for before increasing the batch size (default: 5)."""
-
-    increase_batch_size_on_plateau_rate: float = schema.NonNegativeFloat(default=2.0)
-    """Rate at which the batch size increases (default: 2.0)."""
-
-    increase_batch_size_on_plateau_max: int = schema.PositiveInteger(default=512)
-    """Maximum size of the batch (default: 512)."""
-
-    increase_batch_size_eval_metric: str = LOSS
-    """TODO: Document parameters. (default: 'loss')."""
-
-    increase_batch_size_eval_split: str = TRAINING
-    """TODO: Document parameters. (default: 'training')."""
-
-    decay: bool = False
-    """Turn on exponential decay of the learning rate (default: False)."""
-
-    decay_steps: int = schema.PositiveInteger(default=10000)
-    """TODO: Document parameters. (default: 10000)."""
-
-    decay_rate: float = schema.FloatRange(default=0.96, min=0.0, max=1.0)
-    """TODO: Document parameters. (default: 0.96)."""
-
-    staircase: bool = False
-    """Decays the learning rate at discrete intervals (default: False)."""
-
-    gradient_clipping: Optional[GradientClippingConfig] = GradientClippingDataclassField(default={})
-    """Instance of `ludwig.modules.optimization_modules.GradientClippingConfig` that sets gradient clipping params.
-       (default: `ludwig.modules.optimization_modules.GradientClippingConfig()`)"""
-
-    # TODO(#1673): Need some more logic here for validating against output features
-    validation_field: str = COMBINED
-    """First output feature, by default it is set as the same field of the first output feature (default:
-       `ludwig.constants.COMBINED`)."""
-
-    validation_metric: str = LOSS
-    """Metric used on `validation_field`, set by default to accuracy (default: `ludwig.constants.LOSS`)."""
-
-    learning_rate_warmup_epochs: float = schema.NonNegativeFloat(default=1.0)
-    """Number of epochs to warmup the learning rate for (default: 1.0)."""
 
 
 class Trainer(BaseTrainer):
@@ -273,6 +165,9 @@ class Trainer(BaseTrainer):
         """
 
         self.epochs = config.epochs
+        self.train_steps = config.train_steps
+        self.total_steps = 0  # Computed during training, after batcher has been initialized.
+
         self.regularization_lambda = config.regularization_lambda
         self.regularization_type = config.regularization_type
         self.learning_rate = config.learning_rate
@@ -328,6 +223,13 @@ class Trainer(BaseTrainer):
         optimizer_config.lr = base_learning_rate
         self.gradient_clipping_config = create_clipper(config.gradient_clipping)
         self.optimizer = create_optimizer(model, horovod=horovod, optimizer_config=optimizer_config)
+        self.lr_scale_fn = learning_rate_scale_fns[config.learning_rate_scaling]
+
+        # when training starts the sigint handler will be replaced with
+        # set_steps_to_1_or_quit so this is needed to remember
+        # the original sigint to restore at the end of training
+        # and before set_steps_to_1_or_quit returns
+        self.original_sigint_handler = None
 
         # TODO(Justin): Move to config validation when that's ready.
         if config.checkpoints_per_epoch != 0 and config.steps_per_checkpoint != 0:
@@ -390,7 +292,7 @@ class Trainer(BaseTrainer):
     def set_base_learning_rate(self, base_learning_rate):
         """Sets the target learning rate, and updates the optimizer learning rate."""
         if self.horovod:
-            base_learning_rate *= self.horovod.size()
+            base_learning_rate *= self.lr_scale_fn(self.horovod.size())
         self.base_learning_rate = base_learning_rate  # The LR target for warmup and initial value for decay.
         self.set_optimizer_learning_rate(base_learning_rate)
 
@@ -473,6 +375,8 @@ class Trainer(BaseTrainer):
         early_stop_threshold: int = 3,
         beta: float = 0.98,
     ) -> float:
+        logger.info("Tuning learning rate...")
+
         learning_rate = self.base_learning_rate
 
         current_learning_rate = min_lr
@@ -499,6 +403,7 @@ class Trainer(BaseTrainer):
                 best_lr = learning_rates[best_lr_index]
                 return best_lr
             except Exception:
+                logger.exception("Failed to detect optimal learning rate")
                 return None
 
         self.model.train()  # Sets model training mode.
@@ -530,7 +435,8 @@ class Trainer(BaseTrainer):
 
                     # store learning rate and loss
                     learning_rates.append(current_learning_rate)
-                    losses.append(smoothed_loss)
+                    losses.append(smoothed_loss.detach().cpu().numpy())
+                    logger.info(f"Explored learning_rate={current_learning_rate} loss={smoothed_loss}")
 
                     # check whether loss is diverging
                     if step_count > 0 and smoothed_loss > early_stop_threshold * best_loss:
@@ -554,6 +460,10 @@ class Trainer(BaseTrainer):
         optimal_lr = get_optimal_lr(losses, learning_rates)
         if optimal_lr:
             learning_rate = optimal_lr
+        else:
+            logger.info("Could not determine optimal learning rate, falling back to base default")
+
+        logger.info(f"Selected learning_rate={learning_rate}")
         return learning_rate
 
     def tune_batch_size(
@@ -561,16 +471,19 @@ class Trainer(BaseTrainer):
         config: Dict[str, Any],
         training_set: Dataset,
         random_seed: int = default_random_seed,
-        max_trials: int = 10,
+        max_trials: int = 20,
         halving_limit: int = 3,
     ) -> int:
+        logger.info("Tuning batch size...")
+
         def _is_valid_batch_size(batch_size):
+            # make sure that batch size is valid (e.g. less than size of ds)
             return batch_size < len(training_set)
 
         # TODO (ASN) : Circle back on how we want to set default placeholder value
         # Currently, since self.batch_size is originally set to auto, we provide a
-        # placeholder starting value (namely, 128)
-        batch_size = 128
+        # placeholder starting value
+        batch_size = 2
         skip_save_model = self.skip_save_model
         skip_save_progress = self.skip_save_progress
         skip_save_log = self.skip_save_log
@@ -579,47 +492,24 @@ class Trainer(BaseTrainer):
         self.skip_save_progress = True
         self.skip_save_log = True
 
+        best_batch_size = None
         try:
-            high = None
             count = 0
-            halving_count = 0
-            while halving_count < halving_limit:
+            while count < max_trials and _is_valid_batch_size(batch_size):
+                logger.info(f"Exploring batch_size={batch_size}")
                 gc.collect()
 
-                low = batch_size
-                prev_batch_size = batch_size
                 try:
                     self.train_for_tuning(training_set, batch_size, total_steps=3)
+                    best_batch_size = batch_size
                     count += 1
-                    if count >= max_trials:
-                        break
-                    if high:
-                        if high - low <= 1:
-                            break
-                        midval = (high + low) // 2
-                        batch_size = midval
-                    else:
-                        batch_size *= 2  # double batch size
 
-                    if batch_size == prev_batch_size:
-                        break
-
+                    # double batch size
+                    batch_size *= 2
                 except RuntimeError:
                     # PyTorch only generates Runtime errors for CUDA OOM.
                     gc.collect()
-                    high = batch_size
-                    halving_count += 1
-                    midval = (high + low) // 2
-                    batch_size = midval
-                    if high - low <= 1:
-                        break
-
-                # make sure that batch size is valid (e.g. less than size of ds)
-                if not _is_valid_batch_size(batch_size):
-                    batch_size = min(batch_size, len(training_set))
-
-                # edge case where bs is no longer increasing
-                if batch_size == prev_batch_size:
+                    logger.info(f"OOM at batch_size={batch_size}")
                     break
         finally:
             # Restore original parameters to defaults
@@ -627,7 +517,8 @@ class Trainer(BaseTrainer):
             self.skip_save_progress = skip_save_progress
             self.skip_save_log = skip_save_log
 
-        return batch_size
+        logger.info(f"Selected batch_size={best_batch_size}")
+        return best_batch_size
 
     def run_evaluation(
         self,
@@ -645,6 +536,7 @@ class Trainer(BaseTrainer):
         save_path,
         loss: torch.Tensor,
         all_losses: Dict[str, torch.Tensor],
+        early_stopping_steps: int,
     ) -> bool:
         """Runs evaluation over training, validation, and test sets.
 
@@ -762,7 +654,7 @@ class Trainer(BaseTrainer):
                 self.increase_batch_size_on_plateau_max,
                 self.increase_batch_size_eval_metric,
                 self.increase_batch_size_eval_split,
-                self.early_stop,
+                early_stopping_steps,
                 self.skip_save_model,
             )
         else:
@@ -788,7 +680,10 @@ class Trainer(BaseTrainer):
         # Only use signals when on the main thread to avoid issues with CherryPy
         # https://github.com/ludwig-ai/ludwig/issues/286
         if threading.current_thread() == threading.main_thread():
-            signal.signal(signal.SIGINT, self.set_epochs_to_1_or_quit)
+            # set the original sigint signal handler
+            # as we want to restore it at the end of training
+            self.original_sigint_handler = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, self.set_steps_to_1_or_quit)
 
         metrics_names = get_metric_names(output_features)
 
@@ -846,7 +741,7 @@ class Trainer(BaseTrainer):
 
         # ====== Setup session =======
         checkpoint = checkpoint_manager = None
-        if self.is_coordinator():
+        if self.is_coordinator() and not self.skip_save_progress:
             checkpoint = Checkpoint(model=self.model, optimizer=self.optimizer)
             checkpoint_manager = CheckpointManager(
                 checkpoint, training_checkpoints_path, device=self.device, max_to_keep=1
@@ -888,102 +783,124 @@ class Trainer(BaseTrainer):
 
         set_random_seed(self.random_seed)
 
-        with training_set.initialize_batcher(
-            batch_size=self.batch_size,
-            should_shuffle=self.should_shuffle,
-            seed=self.random_seed,
-            horovod=self.horovod,
-        ) as batcher:
-            # ================ Training Loop ================
-            total_steps = self.epochs * batcher.steps_per_epoch
+        try:
+            with training_set.initialize_batcher(
+                batch_size=self.batch_size,
+                should_shuffle=self.should_shuffle,
+                seed=self.random_seed,
+                horovod=self.horovod,
+            ) as batcher:
+                # ================ Training Loop ================
+                self.total_steps = get_total_steps(self.epochs, batcher.steps_per_epoch, self.train_steps)
 
-            # Get the terminal steps per checkpoint.
-            final_steps_per_checkpoint = get_final_steps_per_checkpoint(
-                batcher.steps_per_epoch, self.steps_per_checkpoint, self.checkpoints_per_epoch, self.is_coordinator()
-            )
-
-            if self.is_coordinator():
-                logger.info(
-                    f"Training for {total_steps} step(s), approximately "
-                    f"{int(total_steps / batcher.steps_per_epoch)} epoch(s)."
-                )
-                logger.info(f"Starting with step {progress_tracker.steps}, epoch: {progress_tracker.epoch}")
-
-            progress_bar = None
-            if self.is_coordinator():
-                progress_bar = tqdm(
-                    desc="Training",
-                    total=total_steps,
-                    file=sys.stdout,
-                    disable=is_progressbar_disabled(),
+                # Get the terminal steps per checkpoint.
+                final_steps_per_checkpoint = get_final_steps_per_checkpoint(
+                    batcher.steps_per_epoch,
+                    self.steps_per_checkpoint,
+                    self.checkpoints_per_epoch,
+                    self.is_coordinator(),
                 )
 
-            while progress_tracker.steps < total_steps:
-                # note that batch size may change over epochs
-                batcher.set_epoch(progress_tracker.epoch, progress_tracker.batch_size)
-
-                # epoch init
-                start_time = time.time()
-
-                # Reset the metrics at the start of the next epoch
-                self.model.train()  # Sets model to training mode.
-                self.model.reset_metrics()
-
-                self.callback(lambda c: c.on_epoch_start(self, progress_tracker, save_path))
-
-                # Trains over a full epoch of data.
-                should_break = self._train_loop(
-                    batcher,
-                    progress_tracker,
-                    save_path,
-                    train_summary_writer,
-                    progress_bar,
-                    training_set,
-                    validation_set,
-                    test_set,
-                    start_time,
-                    validation_summary_writer,
-                    test_summary_writer,
-                    model_weights_path,
-                    model_hyperparameters_path,
-                    output_features,
-                    metrics_names,
-                    checkpoint_manager,
-                    final_steps_per_checkpoint,
-                )
-
-                # ================ Post Training Epoch ================
-                progress_tracker.epoch += 1
-                self.callback(lambda c: c.on_epoch_end(self, progress_tracker, save_path))
+                early_stopping_steps = final_steps_per_checkpoint * self.early_stop
 
                 if self.is_coordinator():
-                    # ========== Save training progress ==========
-                    logging.debug(
-                        f"Epoch {progress_tracker.epoch} took: "
-                        f"{time_utils.strdelta((time.time()- start_time) * 1000.0)}."
+                    logger.info(
+                        f"Training for {self.total_steps} step(s), approximately "
+                        f"{int(self.total_steps / batcher.steps_per_epoch)} epoch(s)."
                     )
-                    checkpoint_manager.save(progress_tracker.steps)
-                    progress_tracker.save(os.path.join(save_path, TRAINING_PROGRESS_TRACKER_FILE_NAME))
+                    logger.info(
+                        f"Early stopping policy: {self.early_stop} round(s) of evaluation, or {early_stopping_steps} "
+                        f"step(s), approximately {int(early_stopping_steps / batcher.steps_per_epoch)} "
+                        "epoch(s).\n"
+                    )
 
-                # Early stop if needed.
-                if should_break:
-                    break
+                    logger.info(f"Starting with step {progress_tracker.steps}, epoch: {progress_tracker.epoch}")
 
-        # ================ Finished Training ================
-        self.callback(
-            lambda c: c.on_trainer_train_teardown(self, progress_tracker, self.is_coordinator()), coordinator_only=False
-        )
+                progress_bar = None
+                if self.is_coordinator():
+                    progress_bar = tqdm(
+                        desc="Training",
+                        total=self.total_steps,
+                        file=sys.stdout,
+                        disable=is_progressbar_disabled(),
+                    )
 
-        if train_summary_writer is not None:
-            train_summary_writer.close()
-        if validation_summary_writer is not None:
-            validation_summary_writer.close()
-        if test_summary_writer is not None:
-            test_summary_writer.close()
+                while progress_tracker.steps < self.total_steps:
+                    # note that batch size may change over epochs
+                    batcher.set_epoch(progress_tracker.epoch, progress_tracker.batch_size)
 
-        # Load the best weights from saved checkpoint
-        if self.is_coordinator() and not self.skip_save_model:
-            self.model.load_state_dict(torch.load(model_weights_path))
+                    # epoch init
+                    start_time = time.time()
+
+                    # Reset the metrics at the start of the next epoch
+                    self.model.train()  # Sets model to training mode.
+                    self.model.reset_metrics()
+
+                    self.callback(lambda c: c.on_epoch_start(self, progress_tracker, save_path))
+
+                    # Trains over a full epoch of data.
+                    should_break = self._train_loop(
+                        batcher,
+                        progress_tracker,
+                        save_path,
+                        train_summary_writer,
+                        progress_bar,
+                        training_set,
+                        validation_set,
+                        test_set,
+                        start_time,
+                        validation_summary_writer,
+                        test_summary_writer,
+                        model_weights_path,
+                        model_hyperparameters_path,
+                        output_features,
+                        metrics_names,
+                        checkpoint_manager,
+                        final_steps_per_checkpoint,
+                        early_stopping_steps,
+                    )
+
+                    # ================ Post Training Epoch ================
+                    progress_tracker.epoch += 1
+                    self.callback(lambda c: c.on_epoch_end(self, progress_tracker, save_path))
+
+                    if self.is_coordinator():
+                        # ========== Save training progress ==========
+                        logging.debug(
+                            f"Epoch {progress_tracker.epoch} took: "
+                            f"{time_utils.strdelta((time.time()- start_time) * 1000.0)}."
+                        )
+                        if not self.skip_save_progress:
+                            checkpoint_manager.save(progress_tracker.steps)
+                            progress_tracker.save(os.path.join(save_path, TRAINING_PROGRESS_TRACKER_FILE_NAME))
+
+                    # Early stop if needed.
+                    if should_break:
+                        break
+        finally:
+            # ================ Finished Training ================
+            self.callback(
+                lambda c: c.on_trainer_train_teardown(self, progress_tracker, save_path, self.is_coordinator()),
+                coordinator_only=False,
+            )
+
+            if train_summary_writer is not None:
+                train_summary_writer.close()
+            if validation_summary_writer is not None:
+                validation_summary_writer.close()
+            if test_summary_writer is not None:
+                test_summary_writer.close()
+
+            if self.is_coordinator() and not self.skip_save_progress:
+                checkpoint_manager.close()
+
+            # Load the best weights from saved checkpoint
+            if self.is_coordinator() and not self.skip_save_model:
+                self.model.load_state_dict(torch.load(model_weights_path))
+
+        # restore original sigint signal handler
+        if self.original_sigint_handler and threading.current_thread() == threading.main_thread():
+            signal.signal(signal.SIGINT, self.original_sigint_handler)
 
         return (
             self.model,
@@ -1011,6 +928,7 @@ class Trainer(BaseTrainer):
         metrics_names,
         checkpoint_manager,
         final_steps_per_checkpoint: int,
+        early_stopping_steps: int,
     ) -> bool:
         """Completes one epoch through the data."""
         while not batcher.last_batch():
@@ -1029,17 +947,14 @@ class Trainer(BaseTrainer):
                 )
 
             if self.horovod:
-                current_learning_rate = (
-                    learning_rate_warmup_distributed(
-                        current_learning_rate,
-                        progress_tracker.epoch,
-                        self.learning_rate_warmup_epochs,
-                        self.horovod.size(),
-                        batcher.step,
-                        batcher.steps_per_epoch,
-                    )
-                    * self.horovod.size()
-                )
+                current_learning_rate = learning_rate_warmup_distributed(
+                    current_learning_rate,
+                    progress_tracker.epoch,
+                    self.learning_rate_warmup_epochs,
+                    self.horovod.size(),
+                    batcher.step,
+                    batcher.steps_per_epoch,
+                ) * self.lr_scale_fn(self.horovod.size())
             else:
                 current_learning_rate = learning_rate_warmup(
                     current_learning_rate,
@@ -1088,7 +1003,7 @@ class Trainer(BaseTrainer):
 
             if progress_tracker.steps % final_steps_per_checkpoint == 0:
                 # Checkpoint the model.
-                if self.is_coordinator():
+                if self.is_coordinator() and not self.skip_save_progress:
                     checkpoint_manager.save(progress_tracker.steps)
                     progress_tracker.save(os.path.join(save_path, TRAINING_PROGRESS_TRACKER_FILE_NAME))
 
@@ -1107,6 +1022,7 @@ class Trainer(BaseTrainer):
                     save_path,
                     loss,
                     all_losses,
+                    early_stopping_steps,
                 )
                 if should_break:
                     return should_break
@@ -1208,7 +1124,7 @@ class Trainer(BaseTrainer):
         increase_batch_size_on_plateau_max,
         increase_batch_size_eval_metric,
         increase_batch_size_eval_split,
-        early_stop,
+        early_stopping_steps: int,
         skip_save_model,
     ):
         """Checks the history of validation scores.
@@ -1298,7 +1214,7 @@ class Trainer(BaseTrainer):
         # ========== Early Stop logic ==========
         # If any early stopping condition is satisfied, either lack of improvement for many steps, or via callbacks on
         # any worker, then trigger early stopping.
-        early_stop_bool = 0 < early_stop <= progress_tracker.last_improvement
+        early_stop_bool = 0 < early_stopping_steps <= progress_tracker.last_improvement
         if not early_stop_bool:
             for callback in self.callbacks:
                 if callback.should_early_stop(self, progress_tracker, self.is_coordinator()):
@@ -1311,27 +1227,28 @@ class Trainer(BaseTrainer):
         if should_early_stop.item():
             if self.is_coordinator():
                 logger.info(
-                    "\nEARLY STOPPING due to lack of "
-                    "validation improvement, "
-                    f"it has been {progress_tracker.steps - progress_tracker.last_improvement_steps} step(s) since "
-                    "last validation improvement.\n"
+                    "\nEARLY STOPPING due to lack of validation improvement. "
+                    f"It has been {progress_tracker.steps - progress_tracker.last_improvement_steps} step(s) since "
+                    f"last validation improvement.\n"
                 )
             should_break = True
         return should_break
 
-    def set_epochs_to_1_or_quit(self, signum, frame):
+    def set_steps_to_1_or_quit(self, signum, frame):
+        """Custom SIGINT handler used to elegantly exit training.
+
+        A single SIGINT will stop training after the next training step. A second SIGINT will stop training immediately.
+        """
         if not self.received_sigint:
-            self.epochs = 1
+            self.total_steps = 1
             self.received_sigint = True
-            logger.critical("\nReceived SIGINT, will finish this epoch and then conclude " "the training")
-            logger.critical("Send another SIGINT to immediately interrupt the process")
+            logger.critical("\nReceived SIGINT, will finish this training step and then conclude training.")
+            logger.critical("Send another SIGINT to immediately interrupt the process.")
         else:
             logger.critical("\nReceived a second SIGINT, will now quit")
+            if self.original_sigint_handler:
+                signal.signal(signal.SIGINT, self.original_sigint_handler)
             sys.exit(1)
-
-    def quit_training(self, signum, frame):
-        logger.critical("Received SIGQUIT, will kill training")
-        sys.exit(1)
 
     def resume_training_progress_tracker(self, training_progress_tracker_path):
         if self.is_coordinator():
@@ -1495,3 +1412,10 @@ class RemoteTrainer(Trainer):
         # Only return results from rank 0 to reduce network overhead
         self.train = return_first(self.train)
         self.train_online = return_first(self.train_online)
+
+
+learning_rate_scale_fns = {
+    "linear": lambda n: n,
+    "sqrt": lambda n: math.sqrt(n),
+    "constant": lambda n: 1,
+}

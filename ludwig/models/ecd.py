@@ -12,7 +12,7 @@ from ludwig.constants import COMBINED, LOSS, NAME, TIED, TYPE
 from ludwig.features.base_feature import InputFeature, OutputFeature
 from ludwig.features.feature_registries import input_type_registry, output_type_registry
 from ludwig.features.feature_utils import LudwigFeatureDict
-from ludwig.marshmallow.marshmallow_schema_utils import load_config_with_kwargs
+from ludwig.schema.utils import load_config_with_kwargs
 from ludwig.utils import output_feature_utils
 from ludwig.utils.algorithms_utils import topological_sort_feature_dependencies
 from ludwig.utils.data_utils import clear_data_cache
@@ -85,7 +85,7 @@ class ECD(LudwigModule):
         model_tensors = self.collect_weights()
         total_size = 0
         for tnsr in model_tensors:
-            total_size += tnsr[1].detach().numpy().size
+            total_size += tnsr[1].detach().cpu().numpy().size
         return total_size
 
     def to_torchscript(self):

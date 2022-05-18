@@ -9,7 +9,14 @@
 #   model serving
 #
 
-FROM rayproject/ray:1.11.0-py37-cu111
+FROM rayproject/ray:1.12.1-py38-cu111
+
+# https://forums.developer.nvidia.com/t/notice-cuda-linux-repository-key-rotation/212771
+RUN sudo apt-key del 7fa2af80 && \
+    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
+    sudo dpkg -i cuda-keyring_1.0-1_all.deb && \
+    sudo rm -f /etc/apt/sources.list.d/cuda.list /etc/apt/apt.conf.d/99allow_unauth cuda-keyring_1.0-1_all.deb && \
+    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys A4B469963BF863CC F60F4B3D7FA2AF80
 
 RUN sudo apt-get update && DEBIAN_FRONTEND="noninteractive" sudo apt-get install -y \
     build-essential \
@@ -34,6 +41,3 @@ RUN HOROVOD_GPU_OPERATIONS=NCCL \
     pip install --no-cache-dir '.[full]' -f https://download.pytorch.org/whl/cu111/torch_stable.html && \
     horovodrun --check-build && \
     python -c "import horovod.torch; horovod.torch.init()"
-
-# Temporary workaround until Ray 1.12
-RUN pip install https://s3-us-west-2.amazonaws.com/ray-wheels/master/991a62dd4782e17a519ce29495b6e837f37f19f3/ray-2.0.0.dev0-cp37-cp37m-manylinux2014_x86_64.whl

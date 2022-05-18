@@ -24,6 +24,7 @@ from typing import Any, Dict, Iterator, Union
 import numpy as np
 import pandas as pd
 import ray
+from pyarrow.fs import FSSpecHandler, PyFileSystem
 from ray.data import read_parquet
 from ray.data.dataset_pipeline import DatasetPipeline
 from ray.data.extensions import TensorDtype
@@ -33,11 +34,19 @@ from ludwig.constants import BINARY, CATEGORY, NAME, NUMBER, TYPE
 from ludwig.data.batcher.base import Batcher
 from ludwig.data.dataset.base import Dataset, DatasetManager
 from ludwig.utils.data_utils import DATA_TRAIN_HDF5_FP
+from ludwig.utils.fs_utils import get_fs_and_path
 from ludwig.utils.misc_utils import get_proc_features
 from ludwig.utils.types import DataFrame
 
-_ray18 = LooseVersion(ray.__version__) >= LooseVersion("1.8")
+_ray112 = LooseVersion(ray.__version__) >= LooseVersion("1.12")
+
+
 _SCALAR_TYPES = {BINARY, CATEGORY, NUMBER}
+
+
+def read_remote_parquet(path: str):
+    fs, path = get_fs_and_path(path)
+    return read_parquet(path, filesystem=PyFileSystem(FSSpecHandler(fs)))
 
 
 class RayDataset(Dataset):
@@ -50,7 +59,7 @@ class RayDataset(Dataset):
         training_set_metadata: Dict[str, Any],
         backend: Backend,
     ):
-        self.ds = backend.df_engine.to_ray_dataset(df) if not isinstance(df, str) else read_parquet(df)
+        self.ds = backend.df_engine.to_ray_dataset(df) if not isinstance(df, str) else read_remote_parquet(df)
         self.features = features
         self.training_set_metadata = training_set_metadata
         self.data_hdf5_fp = training_set_metadata.get(DATA_TRAIN_HDF5_FP)
@@ -62,13 +71,17 @@ class RayDataset(Dataset):
         #     return df
         # self.ds = self.ds.map_batches(to_tensors, batch_format="pandas")
 
-    def pipeline(self, shuffle=True) -> DatasetPipeline:
+    def pipeline(self, shuffle=True, fully_executed=True) -> DatasetPipeline:
+        if not fully_executed and not _ray112:
+            raise ValueError(f"Cannot set fully_execute=False in ray {ray.__version__}")
+
+        if fully_executed and _ray112:
+            # set instance state so calls to __len__ will also use the fully_executed version
+            self.ds = self.ds.fully_executed()
+
         pipe = self.ds.repeat()
         if shuffle:
-            if _ray18:
-                pipe = pipe.random_shuffle_each_window()
-            else:
-                pipe = pipe.random_shuffle()
+            pipe = pipe.random_shuffle_each_window()
         return pipe
 
     @contextlib.contextmanager
@@ -208,10 +221,10 @@ class RayDatasetBatcher(Batcher):
         if read_parallelism == 1:
             self.dataset_batch_iter = self._create_async_reader(dataset)
         elif read_parallelism > 1:
-            self.dataset_batch_iter = self._create_async_parallel_reader(dataset, read_parallelism)
-        else:
             # TODO: consider removing this. doesn't work currently and read performance seems generally
             #  very good with 1 parallelism
+            self.dataset_batch_iter = self._create_async_parallel_reader(dataset, read_parallelism)
+        else:
             self.dataset_batch_iter = self._create_sync_reader(dataset)
 
         self._step = 0

@@ -14,9 +14,8 @@
 # limitations under the License.
 # ==============================================================================
 import logging
-from typing import Dict
+from typing import Any, Dict
 
-import numpy as np
 import torch
 
 from ludwig.constants import (
@@ -34,7 +33,6 @@ from ludwig.constants import (
     PROBABILITIES,
     PROBABILITY,
     PROC_COLUMN,
-    SOFTMAX_CROSS_ENTROPY,
     TEXT,
     TIED,
     TOKEN_ACCURACY,
@@ -42,7 +40,8 @@ from ludwig.constants import (
 )
 from ludwig.encoders.registry import get_encoder_cls
 from ludwig.features.base_feature import BaseFeatureMixin, OutputFeature
-from ludwig.features.sequence_feature import SequenceInputFeature, SequenceOutputFeature
+from ludwig.features.feature_utils import compute_sequence_probability
+from ludwig.features.sequence_feature import _SequencePreprocessing, SequenceInputFeature, SequenceOutputFeature
 from ludwig.utils.math_utils import softmax
 from ludwig.utils.misc_utils import set_default_values
 from ludwig.utils.strings_utils import (
@@ -50,9 +49,9 @@ from ludwig.utils.strings_utils import (
     create_vocabulary,
     PADDING_SYMBOL,
     SpecialSymbol,
-    tokenizer_registry,
     UNKNOWN_SYMBOL,
 )
+from ludwig.utils.tokenizers import tokenizer_registry
 from ludwig.utils.types import DataFrame
 
 logger = logging.getLogger(__name__)
@@ -163,16 +162,26 @@ class TextFeatureMixin(BaseFeatureMixin):
 
     @staticmethod
     def feature_data(column, metadata, preprocessing_parameters, backend):
+        # TODO(1891): Remove backward compatibility hack once all models have been retrained with Ludwig after
+        # https://github.com/ludwig-ai/ludwig/pull/1859.
+        prefix = ""
+        padding_symbol_metadata_key = "padding_symbol"
+        unknown_symbol_metadata_key = "unknown_symbol"
+        if "str2idx" not in metadata:
+            prefix = "word_"
+            padding_symbol_metadata_key = "word_pad_symbol"
+            unknown_symbol_metadata_key = "word_unk_symbol"
+
         return build_sequence_matrix(
             sequences=column,
-            inverse_vocabulary=metadata["str2idx"],
-            tokenizer_type=preprocessing_parameters["tokenizer"],
-            length_limit=metadata["max_sequence_length"],
-            padding_symbol=metadata["padding_symbol"],
+            inverse_vocabulary=metadata[f"{prefix}str2idx"],
+            tokenizer_type=preprocessing_parameters[f"{prefix}tokenizer"],
+            length_limit=metadata[f"{prefix}max_sequence_length"],
+            padding_symbol=metadata[padding_symbol_metadata_key],
             padding=preprocessing_parameters["padding"],
-            unknown_symbol=metadata["unknown_symbol"],
+            unknown_symbol=metadata[unknown_symbol_metadata_key],
             lowercase=preprocessing_parameters["lowercase"],
-            tokenizer_vocab_file=preprocessing_parameters["vocab_file"],
+            tokenizer_vocab_file=preprocessing_parameters[f"{prefix}vocab_file"],
             pretrained_model_name_or_path=preprocessing_parameters["pretrained_model_name_or_path"],
             processor=backend.df_engine,
         )
@@ -245,9 +254,13 @@ class TextInputFeature(TextFeatureMixin, SequenceInputFeature):
     def output_shape(self) -> torch.Size:
         return self.encoder_obj.output_shape
 
+    @staticmethod
+    def create_preproc_module(metadata: Dict[str, Any]) -> torch.nn.Module:
+        return _SequencePreprocessing(metadata)
+
 
 class TextOutputFeature(TextFeatureMixin, SequenceOutputFeature):
-    loss = {TYPE: SOFTMAX_CROSS_ENTROPY}
+    loss = {TYPE: "sequence_softmax_cross_entropy"}
     metric_functions = {LOSS: None, TOKEN_ACCURACY: None, LAST_ACCURACY: None, PERPLEXITY: None, EDIT_DISTANCE: None}
     default_validation_metric = LOSS
     max_sequence_length = 0
@@ -333,17 +346,9 @@ class TextOutputFeature(TextFeatureMixin, SequenceOutputFeature):
         prob_col = f"{self.feature_name}_{PROBABILITY}"
         if probs_col in result:
 
-            def compute_prob(probs):
-                if isinstance(probs, (list, tuple, np.ndarray)):
-                    for i in range(len(probs)):
-                        probs[i] = np.max(probs[i])
-                    return np.prod(probs)
-                else:
-                    return np.prod(probs, axis=-1)
-
             result[prob_col] = backend.df_engine.map_objects(
                 result[probs_col],
-                compute_prob,
+                compute_sequence_probability,
             )
 
             # commenting probabilities out because usually it is huge:

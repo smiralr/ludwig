@@ -3,9 +3,11 @@ from typing import List, Tuple, Union
 import numpy as np
 import pytest
 import torch
+import torchtext
 
-from ludwig.features.sequence_feature import SequenceInputFeature
-from ludwig.features.text_feature import TextInputFeature
+from ludwig.constants import LAST_HIDDEN, LOGITS
+from ludwig.features.sequence_feature import _SequencePreprocessing, SequenceInputFeature, SequenceOutputFeature
+from ludwig.features.text_feature import TextInputFeature, TextOutputFeature
 from tests.integration_tests.utils import ENCODERS, sequence_feature
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -77,6 +79,195 @@ def test_sequence_input_feature(
     assert encoder_output["encoder_output"].shape == (BATCH_SIZE, *input_feature_obj.output_shape)
 
 
-# todo: add unit test for sequence output feature
-def test_sequence_output_feature():
-    pass
+@pytest.mark.parametrize("sequence_type", [SequenceOutputFeature, TextOutputFeature])
+def test_sequence_output_feature(sequence_type: Union[SequenceOutputFeature, TextOutputFeature]):
+    output_feature_defn = sequence_feature(
+        max_len=SEQ_SIZE, max_sequence_length=SEQ_SIZE, vocab_size=VOCAB_SIZE, input_size=VOCAB_SIZE
+    )
+    output_feature_obj = sequence_type(output_feature_defn, {}).to(DEVICE)
+    combiner_outputs = {}
+    combiner_outputs["combiner_output"] = torch.randn([BATCH_SIZE, SEQ_SIZE, VOCAB_SIZE], dtype=torch.float32).to(
+        DEVICE
+    )
+
+    text_output = output_feature_obj(combiner_outputs, {})
+
+    assert LAST_HIDDEN in text_output
+    assert LOGITS in text_output
+    assert text_output[LOGITS].size() == torch.Size([BATCH_SIZE, SEQ_SIZE, VOCAB_SIZE])
+
+
+def test_sequence_preproc_module_bad_tokenizer():
+    metadata = {
+        "preprocessing": {
+            "lowercase": True,
+            "tokenizer": "dutch_lemmatize",
+            "unknown_symbol": "<UNK>",
+            "padding_symbol": "<PAD>",
+        },
+        "max_sequence_length": SEQ_SIZE,
+        "str2idx": {"<EOS>": 0, "<SOS>": 1, "<PAD>": 2, "<UNK>": 3, "▁hell": 4, "o": 5, "▁world": 6},
+    }
+
+    with pytest.raises(ValueError):
+        _SequencePreprocessing(metadata)
+
+
+def test_sequence_preproc_module_space_tokenizer():
+    metadata = {
+        "preprocessing": {
+            "lowercase": True,
+            "tokenizer": "space",
+            "unknown_symbol": "<UNK>",
+            "padding_symbol": "<PAD>",
+        },
+        "max_sequence_length": SEQ_SIZE,
+        "str2idx": {
+            "<EOS>": 0,
+            "<SOS>": 1,
+            "<PAD>": 2,
+            "<UNK>": 3,
+            "hello": 4,
+            "world": 5,
+            "paleontology": 6,
+        },
+    }
+    module = _SequencePreprocessing(metadata)
+
+    res = module(["    paleontology", "unknown", "hello    world hello", "hello world hello     world    "])
+
+    assert torch.allclose(
+        res, torch.tensor([[1, 6, 0, 2, 2, 2], [1, 3, 0, 2, 2, 2], [1, 4, 5, 4, 0, 2], [1, 4, 5, 4, 5, 0]])
+    )
+
+
+def test_text_preproc_module_space_punct_tokenizer():
+    metadata = {
+        "preprocessing": {
+            "lowercase": True,
+            "tokenizer": "space_punct",
+            "unknown_symbol": "<UNK>",
+            "padding_symbol": "<PAD>",
+        },
+        "max_sequence_length": SEQ_SIZE,
+        "str2idx": {
+            "<EOS>": 0,
+            "<SOS>": 1,
+            "<PAD>": 2,
+            "<UNK>": 3,
+            "this": 4,
+            "sentence": 5,
+            "has": 6,
+            "punctuation": 7,
+            ",": 8,
+            ".": 9,
+        },
+    }
+    module = _SequencePreprocessing(metadata)
+
+    res = module(["punctuation", ",,,,", "this... this... punctuation", "unknown"])
+
+    assert torch.allclose(
+        res, torch.tensor([[1, 7, 0, 2, 2, 2], [1, 8, 8, 8, 8, 0], [1, 4, 9, 9, 9, 4], [1, 3, 0, 2, 2, 2]])
+    )
+
+
+@pytest.mark.skipif(
+    torch.torch_version.TorchVersion(torchtext.__version__) < (0, 12, 0), reason="requires torchtext 0.12.0 or higher"
+)
+def test_sequence_preproc_module_sentencepiece_tokenizer():
+    metadata = {
+        "preprocessing": {
+            "lowercase": True,
+            "tokenizer": "sentencepiece",
+            "unknown_symbol": "<UNK>",
+            "padding_symbol": "<PAD>",
+        },
+        "max_sequence_length": SEQ_SIZE,
+        "str2idx": {
+            "<EOS>": 0,
+            "<SOS>": 1,
+            "<PAD>": 2,
+            "<UNK>": 3,
+            "▁hell": 4,
+            "o": 5,
+            "▁world": 6,
+            "▁pale": 7,
+            "ont": 8,
+            "ology": 9,
+        },
+    }
+    module = _SequencePreprocessing(metadata)
+
+    res = module(["paleontology", "unknown", "hello world hello", "hello world hello world"])
+
+    assert torch.allclose(
+        res, torch.tensor([[1, 7, 8, 9, 0, 2], [1, 3, 3, 3, 0, 2], [1, 4, 5, 6, 4, 5], [1, 4, 5, 6, 4, 5]])
+    )
+
+
+@pytest.mark.skipif(
+    torch.torch_version.TorchVersion(torchtext.__version__) < (0, 12, 0), reason="requires torchtext 0.12.0 or higher"
+)
+def test_sequence_preproc_module_clip_tokenizer():
+    metadata = {
+        "preprocessing": {
+            "lowercase": True,
+            "tokenizer": "clip",
+            "unknown_symbol": "<UNK>",
+            "padding_symbol": "<PAD>",
+        },
+        "max_sequence_length": SEQ_SIZE,
+        "str2idx": {
+            "<EOS>": 0,
+            "<SOS>": 1,
+            "<PAD>": 2,
+            "<UNK>": 3,
+            "hello</w>": 4,
+            "world</w>": 5,
+            "pale": 7,
+            "ontology</w>": 8,
+        },
+    }
+    module = _SequencePreprocessing(metadata)
+
+    res = module(["paleontology", "unknown", "hello world hello", "hello world hello world"])
+
+    assert torch.allclose(
+        res, torch.tensor([[1, 7, 8, 0, 2, 2], [1, 3, 0, 2, 2, 2], [1, 4, 5, 4, 0, 2], [1, 4, 5, 4, 5, 0]])
+    )
+
+
+@pytest.mark.skipif(
+    torch.torch_version.TorchVersion(torchtext.__version__) < (0, 12, 0), reason="requires torchtext 0.12.0 or higher"
+)
+def test_sequence_preproc_module_gpt2bpe_tokenizer():
+    metadata = {
+        "preprocessing": {
+            "lowercase": True,
+            "tokenizer": "gpt2bpe",
+            "unknown_symbol": "<UNK>",
+            "padding_symbol": "<PAD>",
+        },
+        "max_sequence_length": SEQ_SIZE,
+        "str2idx": {
+            "<EOS>": 0,
+            "<SOS>": 1,
+            "<PAD>": 2,
+            "<UNK>": 3,
+            "hello": 4,
+            "Ġworld": 5,
+            "Ġhello": 7,
+            "p": 8,
+            "ale": 9,
+            "ont": 10,
+            "ology": 11,
+        },
+    }
+    module = _SequencePreprocessing(metadata)
+
+    res = module(["paleontology", "unknown", "hello world hello", "hello world hello world"])
+
+    assert torch.allclose(
+        res, torch.tensor([[1, 8, 9, 10, 11, 0], [1, 3, 0, 2, 2, 2], [1, 4, 5, 7, 0, 2], [1, 4, 5, 7, 5, 0]])
+    )
