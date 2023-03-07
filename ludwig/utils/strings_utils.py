@@ -1239,7 +1239,7 @@ class HFTokenizer(BaseTokenizer):
         from transformers import AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            pretrained_model_name_or_path,
+            pretrained_model_name_or_path, from_pt=True
         )
 
     def __call__(self, text):

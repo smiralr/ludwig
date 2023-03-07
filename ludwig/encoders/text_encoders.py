@@ -952,7 +952,7 @@ class AutoTransformerEncoder(TextEncoder):
             sys.exit(-1)
 
         self.transformer = TFAutoModel.from_pretrained(
-            pretrained_model_name_or_path
+            pretrained_model_name_or_path, from_pt = True
         )
         self.reduce_output = reduce_output
         if not self.reduce_output == 'cls_pooled':
